@@ -35,6 +35,10 @@ function App() {
   const [ratio, setRatio] = useState("1:1");
   const [videoFormat, setVideoFormat] = useState("Vertical (9:16)");
   const [search, setSearch] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generatedText, setGeneratedText] = useState("");
+  const [generatedImage, setGeneratedImage] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const go = (next: Page) => {
     setPage(next);
@@ -42,12 +46,43 @@ function App() {
     setNotice(null);
   };
 
-  const submitCreator = (event: FormEvent) => {
+  const submitCreator = async (event: FormEvent) => {
     event.preventDefault();
-    setNotice({
-      title: "Provedor de IA não configurado",
-      message: "O formulário foi validado, mas a geração ainda não está disponível. Conecte um provedor real nas configurações antes de gerar conteúdo."
-    });
+    setNotice(null);
+    if (page === "Criar vídeo") {
+      setNotice({ title: "Provedor de vídeo pendente", message: "Ainda não há um provedor de vídeo configurado. Nenhum vídeo foi gerado." });
+      return;
+    }
+    setIsGenerating(true);
+    try {
+      const endpoint = page === "Criar texto" ? "/api/generate-text" : "/api/generate-image";
+      const payload = page === "Criar texto" ? { product, audience, tone, goal, contentType } : { prompt, ratio };
+      const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Não foi possível concluir a geração.");
+      if (page === "Criar texto" && typeof data.text === "string") {
+        setGeneratedText(data.text);
+        setNotice({ title: "Texto gerado", message: "O provedor retornou um texto real. Revise antes de publicar." });
+      } else if (page === "Criar imagem" && typeof data.image === "string") {
+        setGeneratedImage(data.image);
+        setNotice({ title: "Imagem gerada", message: "O provedor retornou uma imagem real. Você pode baixá-la." });
+      } else throw new Error("O provedor retornou um formato de resposta inesperado.");
+    } catch (error) {
+      setNotice({ title: "Não foi possível gerar", message: error instanceof Error ? error.message : "Ocorreu um erro inesperado." });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const copyGeneratedText = async () => {
+    if (!generatedText) return;
+    try {
+      await navigator.clipboard.writeText(generatedText);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setNotice({ title: "Cópia indisponível", message: "Selecione o texto da prévia e copie manualmente." });
+    }
   };
 
   const showNotice = (title: string, message: string) => setNotice({ title, message });
@@ -129,13 +164,13 @@ function App() {
               <label>Produto ou serviço<input required minLength={2} value={product} onChange={(e) => setProduct(e.target.value)} placeholder="Ex.: Garrafa térmica de aço inox" /></label>
               <label>Público-alvo<input value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="Ex.: Pessoas que praticam esportes" /></label>
               <div className="form-grid"><label>Tom de voz<select value={tone} onChange={(e) => setTone(e.target.value)}><option>Profissional</option><option>Amigável</option><option>Persuasivo</option><option>Descontraído</option><option>Premium</option></select></label><label>Objetivo<select value={goal} onChange={(e) => setGoal(e.target.value)}><option>Vender</option><option>Informar</option><option>Engajar</option><option>Gerar leads</option></select></label></div>
-              <button className="primary-button full-button" type="submit"><WandSparkles size={17} /> Preparar geração <ArrowRight size={16} /></button>
+              <button className="primary-button full-button" type="submit" disabled={isGenerating}>{isGenerating ? <><span className="button-spinner" /> Gerando conteúdo...</> : <><WandSparkles size={17} /> Gerar texto <ArrowRight size={16} /></>}</button>
               <p className="form-footnote"><ShieldCheck size={14} /> A geração será ativada após conectar um provedor de IA.</p>
             </section>
-            <section className="panel preview-panel"><div className="panel-heading"><div><h2>Prévia do resultado</h2><p>Seu conteúdo aparecerá aqui.</p></div></div><div className="empty-preview"><div className="preview-illustration"><MessageSquareText size={27} /></div><strong>Pronto para criar?</strong><p>Preencha os campos ao lado. Assim que um provedor real estiver conectado, você poderá gerar e revisar o conteúdo aqui.</p><span className="status-pill"><span /> Aguardando integração</span></div></section>
+            <section className="panel preview-panel"><div className="panel-heading"><div><h2>Prévia do resultado</h2><p>{generatedText ? "Resposta real do provedor conectado." : "Seu conteúdo aparecerá aqui."}</p></div>{generatedText && <button className="text-button" type="button" onClick={copyGeneratedText}><ArrowDownToLine size={14} /> {copied ? "Copiado" : "Copiar texto"}</button>}</div>{generatedText ? <div className="generated-result"><pre>{generatedText}</pre><p className="result-disclaimer">Revise os fatos e as informações do produto antes de publicar.</p></div> : <div className="empty-preview"><div className="preview-illustration"><MessageSquareText size={27} /></div><strong>Pronto para criar?</strong><p>Quando a API estiver configurada na Vercel, o texto gerado aparecerá aqui.</p><span className="status-pill"><span /> Aguardando geração</span></div>}</section>
           </form>}
-          {page === "Criar imagem" && <><CreatorHeader icon={<ImagePlus size={21} />} eyebrow="GERADOR VISUAL" title={pageTitle[page]} description="Prepare instruções para imagens de produtos, anúncios e campanhas." /><form className="creator-layout" onSubmit={submitCreator}><section className="panel creator-form"><div className="panel-heading"><div><h2>Configurar imagem</h2><p>Descreva a imagem que deseja criar.</p></div><span className="step-tag">ETAPA 1</span></div><label>Descrição da imagem<textarea required minLength={8} rows={5} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Ex.: Foto de produto em estúdio, fundo claro, iluminação suave..." /></label><label>Proporção<select value={ratio} onChange={(e) => setRatio(e.target.value)}><option>1:1</option><option>4:5</option><option>3:2</option><option>16:9</option><option>9:16</option></select></label><div className="upload-placeholder"><ImagePlus size={21} /><strong>Imagem de referência (opcional)</strong><span>O envio de arquivos será habilitado na próxima etapa.</span></div><button className="primary-button full-button" type="submit"><WandSparkles size={17} /> Preparar geração <ArrowRight size={16} /></button><p className="form-footnote"><ShieldCheck size={14} /> Nenhuma imagem será gerada até conectar um provedor real.</p></section><section className="panel preview-panel"><div className="panel-heading"><div><h2>Prévia da imagem</h2><p>Visualização do resultado final.</p></div></div><div className="empty-preview"><div className="preview-illustration"><BookImage size={27} /></div><strong>Seu próximo visual começa aqui</strong><p>Defina o prompt e a proporção. A geração real será conectada após a configuração do provedor.</p><span className="status-pill"><span /> Aguardando integração</span></div></section></form></>}
-          {page === "Criar vídeo" && <><CreatorHeader icon={<Film size={21} />} eyebrow="ESTÚDIO DE VÍDEO" title={pageTitle[page]} description="Organize o briefing do vídeo antes de conectar o serviço de geração." /><form className="creator-layout" onSubmit={submitCreator}><section className="panel creator-form"><div className="panel-heading"><div><h2>Briefing do vídeo</h2><p>Defina a ideia principal do seu vídeo.</p></div><span className="step-tag">ETAPA 1</span></div><label>Ideia ou roteiro<textarea required minLength={8} rows={5} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Descreva as cenas, produto, estilo e mensagem..." /></label><label>Formato<select value={videoFormat} onChange={(e) => setVideoFormat(e.target.value)}><option>Vertical (9:16)</option><option>Quadrado (1:1)</option><option>Horizontal (16:9)</option></select></label><div className="info-card"><Film size={18} /><p><strong>Duração e modelo</strong><br />Serão exibidos quando o provedor conectado confirmar quais opções suporta.</p></div><button className="primary-button full-button" type="submit"><WandSparkles size={17} /> Preparar geração <ArrowRight size={16} /></button><p className="form-footnote"><ShieldCheck size={14} /> Nenhum vídeo será gerado sem integração real.</p></section><section className="panel preview-panel"><div className="panel-heading"><div><h2>Prévia do vídeo</h2><p>Seu resultado aparecerá nesta área.</p></div></div><div className="empty-preview"><div className="preview-illustration"><Film size={27} /></div><strong>Transforme uma ideia em vídeo</strong><p>Prepare seu briefing agora. A geração e a exportação serão habilitadas após a integração do provedor.</p><span className="status-pill"><span /> Aguardando integração</span></div></section></form></>}
+          {page === "Criar imagem" && <><CreatorHeader icon={<ImagePlus size={21} />} eyebrow="GERADOR VISUAL" title={pageTitle[page]} description="Prepare instruções para imagens de produtos, anúncios e campanhas." /><form className="creator-layout" onSubmit={submitCreator}><section className="panel creator-form"><div className="panel-heading"><div><h2>Configurar imagem</h2><p>Descreva a imagem que deseja criar.</p></div><span className="step-tag">ETAPA 1</span></div><label>Descrição da imagem<textarea required minLength={8} rows={5} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Ex.: Foto de produto em estúdio, fundo claro, iluminação suave..." /></label><label>Proporção<select value={ratio} onChange={(e) => setRatio(e.target.value)}><option>1:1</option><option>4:5</option><option>3:2</option><option>16:9</option><option>9:16</option></select></label><div className="upload-placeholder"><ImagePlus size={21} /><strong>Imagem de referência (opcional)</strong><span>O envio de arquivos será habilitado na próxima etapa.</span></div><button className="primary-button full-button" type="submit" disabled={isGenerating}>{isGenerating ? <><span className="button-spinner" /> Gerando imagem...</> : <><WandSparkles size={17} /> Gerar imagem <ArrowRight size={16} /></>}</button><p className="form-footnote"><ShieldCheck size={14} /> A API precisa estar habilitada e configurada na Vercel.</p></section><section className="panel preview-panel"><div className="panel-heading"><div><h2>Prévia da imagem</h2><p>{generatedImage ? "Imagem retornada pelo provedor." : "Visualização do resultado final."}</p></div></div>{generatedImage ? <div className="generated-image-wrap"><img src={generatedImage} alt="Imagem gerada por IA" /><a className="secondary-button" href={generatedImage} download="capplay-imagem.png"><ArrowDownToLine size={15} /> Baixar imagem</a></div> : <div className="empty-preview"><div className="preview-illustration"><BookImage size={27} /></div><strong>Seu próximo visual começa aqui</strong><p>Defina o prompt e a proporção. A imagem real aparecerá aqui quando o provedor estiver configurado.</p><span className="status-pill"><span /> Aguardando geração</span></div>}</section></form></>}
+          {page === "Criar vídeo" && <><CreatorHeader icon={<Film size={21} />} eyebrow="ESTÚDIO DE VÍDEO" title={pageTitle[page]} description="Organize o briefing do vídeo antes de conectar o serviço de geração." /><form className="creator-layout" onSubmit={submitCreator}><section className="panel creator-form"><div className="panel-heading"><div><h2>Briefing do vídeo</h2><p>Defina a ideia principal do seu vídeo.</p></div><span className="step-tag">ETAPA 1</span></div><label>Ideia ou roteiro<textarea required minLength={8} rows={5} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Descreva as cenas, produto, estilo e mensagem..." /></label><label>Formato<select value={videoFormat} onChange={(e) => setVideoFormat(e.target.value)}><option>Vertical (9:16)</option><option>Quadrado (1:1)</option><option>Horizontal (16:9)</option></select></label><div className="info-card"><Film size={18} /><p><strong>Duração e modelo</strong><br />Serão exibidos quando o provedor conectado confirmar quais opções suporta.</p></div><button className="primary-button full-button" type="submit"><Film size={17} /> Verificar integração <ArrowRight size={16} /></button><p className="form-footnote"><ShieldCheck size={14} /> Geração de vídeo ainda não está disponível.</p></section><section className="panel preview-panel"><div className="panel-heading"><div><h2>Prévia do vídeo</h2><p>Seu resultado aparecerá nesta área.</p></div></div><div className="empty-preview"><div className="preview-illustration"><Film size={27} /></div><strong>Transforme uma ideia em vídeo</strong><p>Prepare seu briefing agora. A geração e a exportação serão habilitadas após a integração do provedor.</p><span className="status-pill"><span /> Aguardando integração</span></div></section></form></>}
           {page === "Meus projetos" && <EmptyPage icon={<FolderKanban size={25} />} title="Seus projetos ficarão aqui" description="Quando a persistência estiver conectada, você poderá organizar criações, editar versões e continuar de onde parou." action="Criar um texto" onAction={() => go("Criar texto")} />}
           {page === "Biblioteca" && <EmptyPage icon={<Library size={25} />} title="Sua biblioteca está pronta para começar" description="Imagens, vídeos e arquivos gerados aparecerão aqui depois que o armazenamento privado for configurado." action="Criar uma imagem" onAction={() => go("Criar imagem")} />}
           {page === "Histórico" && <EmptyPage icon={<Clock3 size={25} />} title="Nenhuma atividade registrada" description="O histórico será preenchido com tarefas reais após a integração do backend e dos provedores de criação." />}
