@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { finishGenerationLog, startGenerationLog } from "./_lib/generation-log";
 
 export const config = { maxDuration: 45 };
 
@@ -27,6 +28,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const ip = requestIp(req);
   if (!allowRequest(ip)) return res.status(429).json({ error: "Muitas solicitações deste endereço. Aguarde um minuto e tente novamente." });
 
+  const model = process.env.OPENAI_TEXT_MODEL || "gpt-4.1-mini";
+  const startedAt = Date.now();
+  const logId = await startGenerationLog("text", model);
+  if (!logId) {
+    return res.status(503).json({ error: "O registro de geração no Lovable Cloud está indisponível. Nenhuma geração foi iniciada; verifique a configuração do banco." });
+  }
+
   const input = [
     "Você é um redator profissional de marketing e comércio eletrônico. Responda em português brasileiro.",
     "Crie um conteúdo original, específico e útil. Não invente certificações, resultados, características ou garantias que não foram informadas.",
@@ -43,7 +51,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: process.env.OPENAI_TEXT_MODEL || "gpt-4.1-mini",
+        model,
         messages: [{ role: "user", content: input }],
         temperature: 0.7,
         max_tokens: 1200
@@ -52,20 +60,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
     const data = await upstream.json() as any;
     if (!upstream.ok) {
+      await finishGenerationLog(logId, "failed", Date.now() - startedAt, String(data?.error?.code || `http_${upstream.status}`));
       console.error("OpenAI text provider error", { status: upstream.status, code: data?.error?.code || "provider_error" });
       return res.status(upstream.status === 429 ? 429 : 502).json({ error: "O provedor de texto não concluiu a solicitação. Verifique a conta, o modelo e os limites do provedor." });
     }
-    const text = data?.choices?.[0]?.message?.content;
-    if (typeof text !== "string" || !text.trim()) return res.status(502).json({ error: "O provedor retornou uma resposta vazia." });
-    return res.status(200).json({ text: text.trim(), provider: "openai", model: data?.model || process.env.OPENAI_TEXT_MODEL || "gpt-4.1-mini" });
+    const generated = data?.choices?.[0]?.message?.content;
+    if (typeof generated !== "string" || !generated.trim()) {
+      await finishGenerationLog(logId, "failed", Date.now() - startedAt, "empty_provider_response");
+      return res.status(502).json({ error: "O provedor retornou uma resposta vazia." });
+    }
+    const logged = await finishGenerationLog(logId, "succeeded", Date.now() - startedAt);
+    if (!logged) {
+      return res.status(503).json({ error: "O texto foi gerado pelo provedor, mas não foi possível confirmar o registro no Lovable Cloud. Tente novamente após corrigir o banco." });
+    }
+    return res.status(200).json({ text: generated.trim(), provider: "openai", model: data?.model || model });
   } catch (error) {
+    await finishGenerationLog(logId, "failed", Date.now() - startedAt, error instanceof Error ? error.name : "unknown");
     console.error("Text generation request failed", error instanceof Error ? error.name : "unknown");
     return res.status(504).json({ error: "Tempo limite atingido ao gerar o texto. Tente novamente." });
   }
 }
 
 function clean(value: unknown, max: number): string {
-  return typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max) : "";
+  return typeof value === "string" ? value.replace(/[\\u0000-\\u001f\\u007f]/g, " ").trim().slice(0, max) : "";
 }
 function safeParse(value: string): any {
   try { return JSON.parse(value); } catch { return null; }
