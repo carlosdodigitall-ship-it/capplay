@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { finishGenerationLog, startGenerationLog } from "./_lib/generation-log";
 
 export const config = { maxDuration: 60 };
 
@@ -22,12 +23,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const ip = requestIp(req);
   if (!allowRequest(ip)) return res.status(429).json({ error: "Muitas solicitações deste endereço. Aguarde um minuto e tente novamente." });
 
+  const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
+  const startedAt = Date.now();
+  const logId = await startGenerationLog("image", model);
+  if (!logId) {
+    return res.status(503).json({ error: "O registro de geração no Lovable Cloud está indisponível. Nenhuma geração foi iniciada; verifique a configuração do banco." });
+  }
+
   try {
     const upstream = await fetch("https://api.openai.com/v1/images/generations", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-1",
+        model,
         prompt: `Create a polished, professional marketing image. Aspect ratio requested: ${ratio || "1:1"}. Prompt: ${prompt}`,
         size,
         n: 1
@@ -36,20 +44,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
     const data = await upstream.json() as any;
     if (!upstream.ok) {
+      await finishGenerationLog(logId, "failed", Date.now() - startedAt, String(data?.error?.code || `http_${upstream.status}`));
       console.error("OpenAI image provider error", { status: upstream.status, code: data?.error?.code || "provider_error" });
       return res.status(upstream.status === 429 ? 429 : 502).json({ error: "O provedor de imagens não concluiu a solicitação. Verifique permissões, saldo e modelo." });
     }
     const image = data?.data?.[0]?.b64_json;
-    if (typeof image !== "string" || !image) return res.status(502).json({ error: "O provedor não retornou uma imagem em formato compatível." });
-    return res.status(200).json({ image: `data:image/png;base64,${image}`, provider: "openai", model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-1" });
+    if (typeof image !== "string" || !image) {
+      await finishGenerationLog(logId, "failed", Date.now() - startedAt, "missing_image_payload");
+      return res.status(502).json({ error: "O provedor não retornou uma imagem em formato compatível." });
+    }
+    const logged = await finishGenerationLog(logId, "succeeded", Date.now() - startedAt);
+    if (!logged) {
+      return res.status(503).json({ error: "A imagem foi gerada pelo provedor, mas não foi possível confirmar o registro no Lovable Cloud. Tente novamente após corrigir o banco." });
+    }
+    return res.status(200).json({ image: `data:image/png;base64,${image}`, provider: "openai", model });
   } catch (error) {
+    await finishGenerationLog(logId, "failed", Date.now() - startedAt, error instanceof Error ? error.name : "unknown");
     console.error("Image generation request failed", error instanceof Error ? error.name : "unknown");
     return res.status(504).json({ error: "Tempo limite atingido ao gerar a imagem. Tente novamente." });
   }
 }
 
 function clean(value: unknown, max: number): string {
-  return typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max) : "";
+  return typeof value === "string" ? value.replace(/[\\u0000-\\u001f\\u007f]/g, " ").trim().slice(0, max) : "";
 }
 function safeParse(value: string): any {
   try { return JSON.parse(value); } catch { return null; }
