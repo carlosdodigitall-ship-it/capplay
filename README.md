@@ -46,3 +46,15 @@ OpenCreator é um workspace criativo open source com frontend React/Vite, daemon
 ## Transparência de produto
 
 Nenhuma geração, integração, cobrança, autenticação ou persistência deve ser apresentada como ativa até que esteja implementada e testada de ponta a ponta.
+
+## Geração real de texto e imagem (fase experimental)
+
+Há endpoints server-side em `api/generate-text.ts` e `api/generate-image.ts`. Eles mantêm a chave do provedor no servidor e devolvem erros explícitos quando não estão habilitados.
+
+Variáveis:
+- `OPENAI_API_KEY`: segredo do provedor, somente nas Environment Variables da Vercel.
+- `OPENAI_TEXT_MODEL`: opcional; padrão `gpt-4.1-mini`.
+- `OPENAI_IMAGE_MODEL`: opcional; padrão `gpt-image-1`.
+- `CAPPLAY_GENERATION_ENABLED`: permanece `false` por padrão.
+
+**Segurança:** os endpoints ainda não têm autenticação de usuário nem limitação de uso persistente distribuída. Não ative `CAPPLAY_GENERATION_ENABLED=true` em produção pública até implementar autenticação, controle de gastos e rate limit persistente. O limite em memória incluído é apenas uma proteção auxiliar e não substitui controles de produção.
