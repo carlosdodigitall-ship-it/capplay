@@ -1,5 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
+export const config = { maxDuration: 60 };
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -30,7 +32,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         size,
         n: 1
       }),
-      signal: AbortSignal.timeout(90000)
+      signal: AbortSignal.timeout(55000)
     });
     const data = await upstream.json() as any;
     if (!upstream.ok) {
